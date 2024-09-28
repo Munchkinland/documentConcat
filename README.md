@@ -13,14 +13,23 @@ pip install PyPDF2
 La estructura de carpetas debe ser la siguiente:
 
 project/
+
 │
-├── input/          # Carpeta donde colocar los archivos PDF
+
+├── input/ # Carpeta donde colocar los archivos PDF
+
 │   ├── document1.pdf
+
 │   ├── document2.pdf
+
 │   └── ...
+
 │
-├── output/         # Carpeta donde se guardarán los documentos concatenados
+
+├── output/  # Carpeta donde se guardarán los documentos concatenados
+
 │
+
 └── concatenate_pdfs.py  # Archivo del script de Python
 
 ## Uso
