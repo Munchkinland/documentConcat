@@ -1,112 +1,134 @@
 import os
+import json
 import tkinter as tk
 from tkinter import filedialog, messagebox
+from tkinter import ttk
 from PyPDF2 import PdfReader
-import csv
+import uuid
+import threading
 
-# Función para generar el dataset
-def generate_dataset(pdf_paths, output_folder):
-    if not pdf_paths:
-        messagebox.showwarning("Advertencia", "No se seleccionaron archivos PDF.")
-        return
+class KnowledgeBaseGenerator:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Generador de Base de Conocimiento")
+        self.root.geometry("600x500")
+        self.root.config(bg="#2C3E50")
 
-    os.makedirs(output_folder, exist_ok=True)
-    dataset = []
+        # Estilo de los widgets
+        style = ttk.Style()
+        style.configure("TButton", font=("Helvetica", 12), padding=10, background="#000000", foreground="white")
+        style.configure("TLabel", font=("Helvetica", 11), background="#2C3E50", foreground="white")
+        
+        # Aplicando fondo negro a los botones utilizando 'tk' en lugar de 'ttk' para mayor flexibilidad
+        self.select_button = tk.Button(root, text="Seleccionar Archivos", command=self.select_files, bg="#000000", fg="white", font=("Helvetica", 12))
+        self.select_button.pack(pady=10)
 
-    for pdf_path in pdf_paths:
-        # Extraer texto del PDF
-        pdf_reader = PdfReader(pdf_path)
-        text_content = ""
-        for page in pdf_reader.pages:
-            text = page.extract_text()
-            if text:
-                text_content += text + "\n"
+        # Etiqueta para mostrar el estado
+        self.status_label = ttk.Label(root, text="Seleccione los archivos para generar la base de conocimiento", wraplength=500)
+        self.status_label.pack(pady=20)
 
-        # Generar un DOCUMENT_ID único (por ejemplo, el nombre del archivo sin extensión)
-        document_id = os.path.splitext(os.path.basename(pdf_path))[0]
+        # Barra de progreso
+        self.progress = ttk.Progressbar(root, orient="horizontal", length=400, mode="determinate")
+        self.progress.pack(pady=20)
+        self.progress["value"] = 0
 
-        # Obtener DOCUMENT_SOURCE y SOURCE_DESCRIPTION si es posible
-        document_source = os.path.abspath(pdf_path)  # Ruta absoluta al archivo
-        source_description = f"Archivo PDF: {os.path.basename(pdf_path)}"
+        # Spinner (indicador de carga)
+        self.spinner_label = ttk.Label(root, text="", wraplength=500)
+        self.spinner_label.pack(pady=10)
 
-        # Obtener METADATA si está disponible
-        metadata = pdf_reader.metadata
+        # Botón para generar el dataset
+        self.generate_button = tk.Button(root, text="Generar Dataset", command=self.start_generation, state=tk.DISABLED, bg="#000000", fg="white", font=("Helvetica", 12))
+        self.generate_button.pack(pady=10)
 
-        # Agregar registro al dataset
-        dataset.append({
-            'DOCUMENT': text_content,
-            'DOCUMENT_ID': document_id,
-            'DOCUMENT_SOURCE': document_source,
-            'SOURCE_DESCRIPTION': source_description,
-            'METADATA': metadata
-        })
+        # Botón para descargar el dataset
+        self.download_button = tk.Button(root, text="Descargar Dataset", command=self.download_dataset, state=tk.DISABLED, bg="#000000", fg="white", font=("Helvetica", 12))
+        self.download_button.pack(pady=10)
 
-    # Guardar el dataset en un archivo CSV
-    output_csv_path = os.path.join(output_folder, 'dataset.csv')
-    with open(output_csv_path, 'w', encoding='utf-8', newline='') as csvfile:
-        fieldnames = ['DOCUMENT', 'DOCUMENT_ID', 'DOCUMENT_SOURCE', 'SOURCE_DESCRIPTION', 'METADATA']
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        # Variable para almacenar archivos seleccionados
+        self.selected_files = []
+        self.dataset = []
+        self.output_file = None
 
-        writer.writeheader()
-        for data in dataset:
-            # Convertir METADATA a string para almacenar en CSV
-            metadata_str = str(data['METADATA']) if data['METADATA'] else ''
-            writer.writerow({
-                'DOCUMENT': data['DOCUMENT'],
-                'DOCUMENT_ID': data['DOCUMENT_ID'],
-                'DOCUMENT_SOURCE': data['DOCUMENT_SOURCE'],
-                'SOURCE_DESCRIPTION': data['SOURCE_DESCRIPTION'],
-                'METADATA': metadata_str
-            })
+    def select_files(self):
+        """Permite seleccionar múltiples archivos PDF o cualquier tipo de documento."""
+        files = filedialog.askopenfilenames(filetypes=[("Archivos", "*.pdf;*.txt;*.docx;*.json")])
+        if files:
+            self.selected_files = files
+            self.generate_button.config(state=tk.NORMAL)
+            self.status_label.config(text=f"Archivos seleccionados: {len(files)}")
 
-    messagebox.showinfo("Éxito", f"Dataset generado en:\n{output_csv_path}")
+    def extract_text_from_pdf(self, file_path):
+        """Extrae el texto de un archivo PDF usando list comprehension."""
+        return ''.join([page.extract_text() for page in PdfReader(file_path).pages]).strip()
 
-# Función para seleccionar los PDFs
-def select_pdfs():
-    file_paths = filedialog.askopenfilenames(
-        title="Seleccionar archivos PDF",
-        filetypes=[("Archivos PDF", "*.pdf")])
-    
-    if file_paths:
-        selected_files_label.config(text="\n".join(file_paths))
-        global selected_pdfs
-        selected_pdfs = list(file_paths)
+    def generate_document_entry(self, file_path):
+        """Genera la entrada del dataset para un documento."""
+        document_text = (
+            self.extract_text_from_pdf(file_path) if file_path.endswith('.pdf') else 
+            open(file_path, 'r', encoding='utf-8').read().strip() if file_path.endswith('.txt') else
+            f"Referencia al documento: {os.path.basename(file_path)}"
+        )
+        
+        return {
+            "DOCUMENT_ID": str(uuid.uuid4()),
+            "DOCUMENT": document_text,
+            "DOCUMENT_SOURCE": file_path,
+            "SOURCE_DESCRIPTION": f"Descripción de {os.path.basename(file_path)}",
+            "METADATA": {
+                "file_name": os.path.basename(file_path),
+                "file_size": os.path.getsize(file_path),
+                "file_type": os.path.splitext(file_path)[1]
+            }
+        }
 
-# Función para seleccionar la carpeta de salida
-def select_output_folder():
-    folder_path = filedialog.askdirectory(title="Seleccionar carpeta de salida")
-    if folder_path:
-        output_folder_label.config(text=folder_path)
-        global output_folder
-        output_folder = folder_path
+    def generate_dataset(self):
+        """Genera un dataset en formato JSON basado en los archivos seleccionados."""
+        self.dataset = [self.generate_document_entry(file_path) for file_path in self.selected_files]
 
-# Función principal al hacer clic en "Generar Dataset"
-def on_generate_dataset_click():
-    if selected_pdfs and output_folder:
-        generate_dataset(selected_pdfs, output_folder)
-    else:
-        messagebox.showwarning("Advertencia", "Seleccione archivos PDF y una carpeta de salida.")
+        # Barra de progreso avanzada
+        total_files = len(self.selected_files)
+        self.progress["maximum"] = total_files
+        for idx, _ in enumerate(self.selected_files, 1):
+            self.progress["value"] = idx
+            self.root.update_idletasks()
 
-# Configurar la ventana principal
-root = tk.Tk()
-root.title("Generador de Dataset para Chatbot")
-root.geometry("600x400")
+        # Guardar el dataset en formato JSON
+        self.output_file = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON files", "*.json")])
+        if self.output_file:
+            with open(self.output_file, 'w', encoding='utf-8') as f:
+                json.dump(self.dataset, f, indent=4, ensure_ascii=False)
+            self.status_label.config(text="Dataset generado exitosamente")
+            self.download_button.config(state=tk.NORMAL)
+        else:
+            self.status_label.config(text="Proceso cancelado")
 
-# Variables globales para almacenar PDFs seleccionados y carpeta de salida
-selected_pdfs = []
-output_folder = ""
+        self.progress["value"] = 0
 
-# Botones y etiquetas para la selección de archivos y carpeta de salida
-tk.Button(root, text="Seleccionar PDFs", command=select_pdfs, width=20).pack(pady=10)
-selected_files_label = tk.Label(root, text="No se han seleccionado archivos PDF", wraplength=580, justify="left")
-selected_files_label.pack(pady=10)
+    def start_generation(self):
+        """Inicia el proceso de generación del dataset en un hilo separado."""
+        self.spinner_label.config(text="Procesando...", foreground="#F39C12")
+        self.generate_button.config(state=tk.DISABLED)
+        self.download_button.config(state=tk.DISABLED)
 
-tk.Button(root, text="Seleccionar carpeta de salida", command=select_output_folder, width=20).pack(pady=10)
-output_folder_label = tk.Label(root, text="No se ha seleccionado carpeta de salida")
-output_folder_label.pack(pady=10)
+        threading.Thread(target=self._generate_and_complete).start()
 
-# Botón para generar el dataset
-tk.Button(root, text="Generar Dataset", command=on_generate_dataset_click, width=20).pack(pady=20)
+    def _generate_and_complete(self):
+        """Genera el dataset y actualiza la interfaz al finalizar."""
+        self.generate_dataset()
+        self.spinner_label.config(text="")
+        self.status_label.config(text="Proceso completado", foreground="#2ECC71")
 
-# Ejecutar la ventana principal
-root.mainloop()
+    def download_dataset(self):
+        """Permite descargar el archivo JSON generado."""
+        if self.output_file:
+            # Mostrar diálogo para guardar el archivo
+            messagebox.showinfo("Descargar", f"El dataset está guardado en {self.output_file}")
+        else:
+            messagebox.showerror("Error", "No se ha generado ningún dataset")
+
+
+# Ejecutar la GUI
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = KnowledgeBaseGenerator(root)
+    root.mainloop()
